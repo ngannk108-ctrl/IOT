@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Giám Sát Sản Xuất IoT ESP32 - Realtime Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js & Chart.js Annotation Plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Top Navigation / Header -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="logo-icon">
+                    <i class="fa-solid fa-microchip pulse-icon"></i>
+                </div>
+                <div class="brand-text">
+                    <h1>IoT ESP32 FACTORY DASHBOARD</h1>
+                    <p class="subtitle">Hệ Thống Giám Sát Năng Suất, Dừng Máy & Phân Tích Lỗi Real-Time</p>
+                </div>
+            </div>
+
+            <div class="header-controls">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot online"></span>
+                    <span class="status-text">Đang đồng bộ...</span>
+                </div>
+
+                <div class="control-group">
+                    <label for="pollInterval"><i class="fa-solid fa-rotate"></i> Làm mới:</label>
+                    <select id="pollInterval">
+                        <option value="2000">2 Giây</option>
+                        <option value="5000" selected>5 Giây</option>
+                        <option value="10000">10 Giây</option>
+                        <option value="0">Tắt Auto</option>
+                    </select>
+                </div>
+
+                <button class="btn btn-primary" id="btnOpenConfig">
+                    <i class="fa-solid fa-link"></i> Kết Nối Google Sheet
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN REALTIME DASHBOARD GRID -->
+        <main class="dashboard-grid">
+            <!-- 1. BẢNG NĂNG SUẤT SẢN XUẤT REAL-TIME -->
+            <section class="card full-width">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fa-solid fa-table-list icon-gold"></i>
+                        <h2>1. Bảng Giám Sát Năng Suất & Tiến Độ Sản Xuất Real-Time</h2>
+                    </div>
+                    <div class="card-actions">
+                        <span class="last-update" id="lastUpdateText">Cập nhật: Vừa xong</span>
+                        <button class="btn-icon" id="btnRefreshManual" title="Tải lại ngay">
+                            <i class="fa-solid fa-arrows-rotate"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table" id="productionTable">
+                        <thead>
+                            <tr>
+                                <th>Tên máy</th>
+                                <th>Tên sản phẩm</th>
+                                <th>Năng suất chuẩn (pc/h)</th>
+                                <th>Mục tiêu</th>
+                                <th>Thực tế đạt</th>
+                                <th>% Hoàn thành</th>
+                                <th>Chú ý</th>
+                            </tr>
+                        </thead>
+                        <tbody id="productionTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 2. MA TRẬN PHÂN TÍCH LỖI (HEATMAP) -->
+            <section class="card full-width">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fa-solid fa-grip-vertical icon-red"></i>
+                        <h2>2. Ma Trận Phân Tích Lỗi (Heatmap) - Thời Gian Thực</h2>
+                    </div>
+                    <div class="legend-scale">
+                        <span class="scale-label">Mức độ lỗi:</span>
+                        <div class="scale-box scale-low">Ít (&lt;150)</div>
+                        <div class="scale-box scale-med">Trung bình (150-300)</div>
+                        <div class="scale-box scale-high">Cao (300-500)</div>
+                        <div class="scale-box scale-crit">Rất cao (&gt;500)</div>
+                        <div class="scale-box scale-na">N/A</div>
+                    </div>
+                </div>
+                <div class="heatmap-container" id="heatmapContainer">
+                    <!-- Heatmap Grid rendered dynamically -->
+                </div>
+            </section>
+
+            <!-- 3. BIỂU ĐỒ THỜI GIAN DỪNG MÁY (%) -->
+            <section class="card half-width">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fa-solid fa-clock-rotate-left icon-warning"></i>
+                        <h2>3. Tỷ Lệ Thời Gian Dừng Máy (%)</h2>
+                    </div>
+                    <div class="target-badge danger">
+                        <i class="fa-solid fa-bullseye"></i> Mục tiêu: &le; 5.0%
+                    </div>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="downtimeChart"></canvas>
+                </div>
+            </section>
+
+            <!-- 4. BIỂU ĐỒ CHẤT LƯỢNG (%) -->
+            <section class="card half-width">
+                <div class="card-header">
+                    <div class="card-title">
+                        <i class="fa-solid fa-award icon-success"></i>
+                        <h2>4. Tỷ Lệ Chất Lượng OK (%)</h2>
+                    </div>
+                    <div class="target-badge success">
+                        <i class="fa-solid fa-bullseye"></i> Mục tiêu: &ge; 95.0%
+                    </div>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="qualityChart"></canvas>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODAL 1: GOOGLE SHEET CONFIG WITH MULTI-URL SUPPORT -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal-box large">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-link"></i> Cấu Hình Kết Nối Dữ Liệu Multi-Link (Nhiều Google Sheet)</h3>
+                <button class="modal-close" id="btnCloseConfig">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="dataSourceType"><b>1. Chọn Nguồn Dữ Liệu:</b></label>
+                    <select id="dataSourceType" class="form-control">
+                        <option value="multi_url" selected>Kết Nối 1 Hoặc Nhiều Link (Google Sheet CSV / Apps Script)</option>
+                        <option value="demo">Chế độ Mô phỏng Real-Time (Demo Mode)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="urlInputGroup">
+                    <div class="url-list-header">
+                        <label><b>2. Danh Sách URL Kết Nối (Đã nạp 2 link Google Sheet thực tế của bạn):</b></label>
+                        <div>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btnResetUrls">
+                                <i class="fa-solid fa-rotate-left"></i> Nạp Lại 2 Link Chuẩn
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btnAddUrlRow">
+                                <i class="fa-solid fa-plus"></i> Thêm Link
+                            </button>
+                        </div>
+                    </div>
+                    <div class="url-inputs-container" id="urlInputsContainer">
+                        <!-- Dynamic URL row inputs inserted here -->
+                    </div>
+                    <small class="help-text">Dữ liệu từ tất cả các đường link sẽ được hợp nhất tự động trên 4 biểu đồ!</small>
+                </div>
+
+                <div class="info-alert">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <div>
+                        <b>Cơ chế kết nối thông minh (CORS Proxy):</b><br>
+                        Hệ thống tự động xử lý bảo mật trình duyệt local `file://` và định dạng số thập phân Tiếng Việt (`"54,1"` $\rightarrow$ `54.1`).
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="btnSaveConfig"><i class="fa-solid fa-floppy-disk"></i> Lưu & Áp Dụng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main JavaScript App -->
+    <script src="app.js"></script>
+</body>
+</html>
