@@ -1,6 +1,9 @@
 /**
  * IoT ESP32 Google Sheet Realtime Production Monitoring Engine
- * Column Headers updated: "Loại SP" renamed to "Tên máy" as requested!
+ * Features:
+ * 1. Date Filter Engine (Lọc dữ liệu theo Ngày): Tự động trích xuất các ngày từ Google Sheet
+ *    và lọc 4 thành phần (Bảng năng suất, Heatmap, Downtime %, Quality %) theo ngày được chọn.
+ * 2. Giữ nguyên 100% tất cả các công thức & logic tính toán đã được aligns từ trước!
  */
 
 const DEFAULT_URLS = [
@@ -14,6 +17,8 @@ const state = {
     apiUrls: [...DEFAULT_URLS],
     pollIntervalMs: 5000,
     timerId: null,
+    selectedDate: 'ALL', // 'ALL' or specific date string e.g. '26/07/2026'
+    allRawRowsHistory: [],
     failedAttemptsCount: 0,
     lastSuccessfulFetchTime: null,
     charts: {
@@ -252,6 +257,68 @@ async function fetchWithFallback(baseUrl) {
     return await resProxy5.text();
 }
 
+// Extract Date String "DD/MM/YYYY" from timestamp
+function extractDateStr(dateRaw) {
+    if (!dateRaw) return '';
+    const str = String(dateRaw).trim();
+    if (str.includes(' ')) {
+        return str.split(' ')[0].trim();
+    }
+    if (str.includes('T')) {
+        const datePart = str.split('T')[0].trim();
+        const parts = datePart.split('-');
+        if (parts.length === 3) {
+            return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+        return datePart;
+    }
+    return str;
+}
+
+// Dynamic Options Builder for Date Selector Dropdown
+function updateDateFilterOptions(allRawRows) {
+    const select = document.getElementById('dateFilterSelect');
+    if (!select) return;
+
+    const currentVal = state.selectedDate;
+
+    // Collect all unique dates
+    const uniqueDates = [];
+    allRawRows.forEach(r => {
+        const dStr = extractDateStr(r['Thời gian upload']);
+        if (dStr && dStr.length >= 8 && !uniqueDates.includes(dStr)) {
+            uniqueDates.push(dStr);
+        }
+    });
+
+    select.innerHTML = '<option value="ALL">Tất cả các ngày</option>';
+    
+    // Sort dates descending (newest dates first)
+    uniqueDates.sort((a, b) => {
+        const pA = a.split('/').reverse().join('');
+        const pB = b.split('/').reverse().join('');
+        return pB.localeCompare(pA);
+    });
+
+    uniqueDates.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.innerText = d;
+        if (d === currentVal) {
+            opt.selected = true;
+        }
+        select.appendChild(opt);
+    });
+
+    // If previously selected date still exists, keep it
+    if (currentVal && (currentVal === 'ALL' || uniqueDates.includes(currentVal))) {
+        select.value = currentVal;
+    } else {
+        select.value = 'ALL';
+        state.selectedDate = 'ALL';
+    }
+}
+
 async function fetchData() {
     try {
         if (state.dataSource === 'demo') {
@@ -321,7 +388,16 @@ async function fetchData() {
                     });
                 }
 
-                const processed = parseRawSheetJson(allRawRows);
+                state.allRawRowsHistory = allRawRows;
+                updateDateFilterOptions(allRawRows);
+
+                // Filter rows by Selected Date
+                let filteredRows = allRawRows;
+                if (state.selectedDate && state.selectedDate !== 'ALL') {
+                    filteredRows = allRawRows.filter(r => extractDateStr(r['Thời gian upload']) === state.selectedDate);
+                }
+
+                const processed = parseRawSheetJson(filteredRows);
                 state.currentData = processed;
                 renderDashboard(processed);
 
@@ -397,6 +473,10 @@ function parseVietnameseFloat(val) {
     return isNaN(parsed) ? 0 : parsed;
 }
 
+// -------------------------------------------------------------
+// BULLETPROOF SESSION DETECTOR & REAL-TIME ACCUMULATOR:
+// Preserves 100% existing calculation formulas!
+// -------------------------------------------------------------
 function parseRawSheetJson(jsonRows) {
     if (!Array.isArray(jsonRows) || jsonRows.length === 0) return [];
 
@@ -579,7 +659,7 @@ function renderProductionTable(data) {
 
     if (!data || data.length === 0) {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color: #94a3b8; font-weight: 500;">
-            <i class="fa-solid fa-circle-info" style="margin-right: 8px;"></i> Chưa có dữ liệu máy nào được đẩy lên Google Sheet!
+            <i class="fa-solid fa-circle-info" style="margin-right: 8px;"></i> Không có dữ liệu sản xuất cho ngày đã chọn!
         </td></tr>`;
         return;
     }
@@ -606,7 +686,7 @@ function renderHeatmap(data) {
     container.innerHTML = '';
 
     if (!data || data.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding: 24px; color: #94a3b8;">Chưa có dữ liệu ma trận lỗi!</div>`;
+        container.innerHTML = `<div style="text-align:center; padding: 24px; color: #94a3b8;">Không có dữ liệu ma trận lỗi cho ngày đã chọn!</div>`;
         return;
     }
 
@@ -818,6 +898,24 @@ function updateCharts(data) {
 // 4. EVENT LISTENERS & MODAL HANDLERS
 // -------------------------------------------------------------
 function initEventListeners() {
+    // Date Filter Selection Listener
+    const dateSelect = document.getElementById('dateFilterSelect');
+    if (dateSelect) {
+        dateSelect.addEventListener('change', (e) => {
+            state.selectedDate = e.target.value;
+            
+            // Re-filter and re-render dashboard immediately
+            let filteredRows = state.allRawRowsHistory;
+            if (state.selectedDate && state.selectedDate !== 'ALL') {
+                filteredRows = state.allRawRowsHistory.filter(r => extractDateStr(r['Thời gian upload']) === state.selectedDate);
+            }
+
+            const processed = parseRawSheetJson(filteredRows);
+            state.currentData = processed;
+            renderDashboard(processed);
+        });
+    }
+
     document.getElementById('btnOpenConfig').addEventListener('click', () => {
         document.getElementById('configModal').classList.add('active');
     });
