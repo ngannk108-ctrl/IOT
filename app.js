@@ -1,9 +1,10 @@
 /**
  * IoT ESP32 Google Sheet Realtime Production Monitoring Engine
  * Features:
- * 1. Date Filter Engine (Lọc dữ liệu theo Ngày): Tự động trích xuất các ngày từ Google Sheet
- *    và lọc 4 thành phần (Bảng năng suất, Heatmap, Downtime %, Quality %) theo ngày được chọn.
- * 2. Giữ nguyên 100% tất cả các công thức & logic tính toán đã được aligns từ trước!
+ * 1. Robust Unicode-Safe Date Extractor & Filter Engine:
+ *    Automatically detects timestamp column (Unicode NFD/NFC safe) and extracts DD/MM/YYYY.
+ * 2. Real-Time Date Selector: Populates dropdown with all dates found in Google Sheet.
+ * 3. Preserves 100% existing calculation formulas & rules!
  */
 
 const DEFAULT_URLS = [
@@ -17,7 +18,7 @@ const state = {
     apiUrls: [...DEFAULT_URLS],
     pollIntervalMs: 5000,
     timerId: null,
-    selectedDate: 'ALL', // 'ALL' or specific date string e.g. '26/07/2026'
+    selectedDate: 'ALL', // 'ALL' or specific date e.g. '25/07/2026'
     allRawRowsHistory: [],
     failedAttemptsCount: 0,
     lastSuccessfulFetchTime: null,
@@ -257,21 +258,52 @@ async function fetchWithFallback(baseUrl) {
     return await resProxy5.text();
 }
 
-// Extract Date String "DD/MM/YYYY" from timestamp
+// -------------------------------------------------------------
+// UNICODE-SAFE DATE EXTRACTOR:
+// Flexible search across all row headers for timestamp values
+// -------------------------------------------------------------
+function getRowTimestampVal(r) {
+    if (!r) return '';
+    for (let key in r) {
+        const cleanKey = String(key).trim().normalize('NFC').toLowerCase();
+        if (cleanKey.includes('thời gian') || cleanKey.includes('upload') || cleanKey.includes('timestamp') || cleanKey.includes('date')) {
+            if (r[key] && String(r[key]).trim().length > 0) {
+                return String(r[key]).trim();
+            }
+        }
+    }
+    const firstVal = Object.values(r)[0];
+    if (firstVal && String(firstVal).match(/\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/)) {
+        return String(firstVal).trim();
+    }
+    return '';
+}
+
 function extractDateStr(dateRaw) {
     if (!dateRaw) return '';
     const str = String(dateRaw).trim();
-    if (str.includes(' ')) {
-        return str.split(' ')[0].trim();
+
+    // Match DD/MM/YYYY or D/M/YYYY
+    const dmyMatch = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (dmyMatch) {
+        const day = dmyMatch[1].padStart(2, '0');
+        const month = dmyMatch[2].padStart(2, '0');
+        const year = dmyMatch[3];
+        return `${day}/${month}/${year}`;
     }
-    if (str.includes('T')) {
-        const datePart = str.split('T')[0].trim();
-        const parts = datePart.split('-');
-        if (parts.length === 3) {
-            return `${parts[2]}/${parts[1]}/${parts[0]}`;
-        }
-        return datePart;
+
+    // Match YYYY-MM-DD
+    const ymdMatch = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if (ymdMatch) {
+        const year = ymdMatch[1];
+        const month = ymdMatch[2].padStart(2, '0');
+        const day = ymdMatch[3].padStart(2, '0');
+        return `${day}/${month}/${year}`;
     }
+
+    if (str.includes(' ')) return str.split(' ')[0].trim();
+    if (str.includes('T')) return str.split('T')[0].trim();
+
     return str;
 }
 
@@ -285,15 +317,16 @@ function updateDateFilterOptions(allRawRows) {
     // Collect all unique dates
     const uniqueDates = [];
     allRawRows.forEach(r => {
-        const dStr = extractDateStr(r['Thời gian upload']);
+        const rawTs = getRowTimestampVal(r);
+        const dStr = extractDateStr(rawTs);
         if (dStr && dStr.length >= 8 && !uniqueDates.includes(dStr)) {
             uniqueDates.push(dStr);
         }
     });
 
     select.innerHTML = '<option value="ALL">Tất cả các ngày</option>';
-    
-    // Sort dates descending (newest dates first)
+
+    // Sort dates descending (newest dates first e.g. 26/07/2026, 25/07/2026...)
     uniqueDates.sort((a, b) => {
         const pA = a.split('/').reverse().join('');
         const pB = b.split('/').reverse().join('');
@@ -310,7 +343,7 @@ function updateDateFilterOptions(allRawRows) {
         select.appendChild(opt);
     });
 
-    // If previously selected date still exists, keep it
+    // Restore selected value if valid
     if (currentVal && (currentVal === 'ALL' || uniqueDates.includes(currentVal))) {
         select.value = currentVal;
     } else {
@@ -362,7 +395,7 @@ async function fetchData() {
                     res.value.forEach(row => {
                         if (row['Năng suất (pcs/1s)'] != null || row['Năng suất chuẩn (pc/h)'] != null) {
                             catalogRows.push(row);
-                        } else if (row['Thời gian upload'] || row['Mã máy'] || row['Mã sản phẩm']) {
+                        } else if (getRowTimestampVal(row) || row['Mã máy'] || row['Mã sản phẩm']) {
                             allRawRows.push(row);
                         }
                     });
@@ -394,7 +427,7 @@ async function fetchData() {
                 // Filter rows by Selected Date
                 let filteredRows = allRawRows;
                 if (state.selectedDate && state.selectedDate !== 'ALL') {
-                    filteredRows = allRawRows.filter(r => extractDateStr(r['Thời gian upload']) === state.selectedDate);
+                    filteredRows = allRawRows.filter(r => extractDateStr(getRowTimestampVal(r)) === state.selectedDate);
                 }
 
                 const processed = parseRawSheetJson(filteredRows);
@@ -907,7 +940,7 @@ function initEventListeners() {
             // Re-filter and re-render dashboard immediately
             let filteredRows = state.allRawRowsHistory;
             if (state.selectedDate && state.selectedDate !== 'ALL') {
-                filteredRows = state.allRawRowsHistory.filter(r => extractDateStr(r['Thời gian upload']) === state.selectedDate);
+                filteredRows = state.allRawRowsHistory.filter(r => extractDateStr(getRowTimestampVal(r)) === state.selectedDate);
             }
 
             const processed = parseRawSheetJson(filteredRows);
