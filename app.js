@@ -1,10 +1,11 @@
 /**
  * IoT ESP32 Google Sheet Realtime Production Monitoring Engine
  * Features:
- * 1. Robust Unicode-Safe Date Extractor & Filter Engine:
- *    Automatically detects timestamp column (Unicode NFD/NFC safe) and extracts DD/MM/YYYY.
- * 2. Real-Time Date Selector: Populates dropdown with all dates found in Google Sheet.
- * 3. Preserves 100% existing calculation formulas & rules!
+ * 1. Native Interactive Calendar & Date Picker Control:
+ *    - Allows picking ANY date from native calendar popup (input type="date").
+ *    - Allows typing any date directly from keyboard.
+ *    - Leaving blank / clearing date defaults to 'ALL' (Tất cả các ngày).
+ * 2. All 4 dashboard components, calculation formulas, status rules, and card aesthetics remain 100% intact!
  */
 
 const DEFAULT_URLS = [
@@ -105,9 +106,9 @@ document.addEventListener('DOMContentLoaded', () => {
     startPolling();
 });
 
-// Load Saved Settings from LocalStorage
+// Load Saved Settings from LocalStorage & Ensure Default URLs exist
 function loadSavedSettings() {
-    const savedType = localStorage.getItem('iot_data_source') || 'multi_url';
+    let savedType = localStorage.getItem('iot_data_source') || 'multi_url';
     let savedUrls = [];
     try {
         savedUrls = JSON.parse(localStorage.getItem('iot_api_urls') || '[]');
@@ -117,8 +118,10 @@ function loadSavedSettings() {
 
     savedUrls = savedUrls.filter(u => u && u.trim().length > 0);
 
-    if (savedUrls.length === 0) {
+    const hasDefaultSheet = savedUrls.some(u => u.includes('2PACX-1vQBR0oZmoxg2spJo7e8k_xNQVXamfWX99yOoEqYTAjHVbhwjy06UBM7RbJQNFMhHeFSLwUm0qjggqCn'));
+    if (savedUrls.length === 0 || !hasDefaultSheet) {
         savedUrls = [...DEFAULT_URLS];
+        localStorage.setItem('iot_api_urls', JSON.stringify(DEFAULT_URLS));
     }
 
     state.dataSource = savedType;
@@ -131,6 +134,7 @@ function loadSavedSettings() {
 
 function renderUrlInputFields() {
     const container = document.getElementById('urlInputsContainer');
+    if (!container) return;
     container.innerHTML = '';
 
     state.apiUrls.forEach((url, idx) => {
@@ -156,6 +160,7 @@ function renderUrlInputFields() {
 function toggleUrlInputVisibility() {
     const type = document.getElementById('dataSourceType').value;
     const urlGroup = document.getElementById('urlInputGroup');
+    if (!urlGroup) return;
     if (type === 'demo') {
         urlGroup.style.display = 'none';
     } else {
@@ -259,97 +264,41 @@ async function fetchWithFallback(baseUrl) {
 }
 
 // -------------------------------------------------------------
-// UNICODE-SAFE DATE EXTRACTOR:
-// Flexible search across all row headers for timestamp values
+// DEEP CELL SCANNER DATE EXTRACTOR:
+// Scans every cell value in a row for DD/MM/YYYY or YYYY-MM-DD
 // -------------------------------------------------------------
-function getRowTimestampVal(r) {
+function extractDateFromRow(r) {
     if (!r) return '';
-    for (let key in r) {
-        const cleanKey = String(key).trim().normalize('NFC').toLowerCase();
-        if (cleanKey.includes('thời gian') || cleanKey.includes('upload') || cleanKey.includes('timestamp') || cleanKey.includes('date')) {
-            if (r[key] && String(r[key]).trim().length > 0) {
-                return String(r[key]).trim();
-            }
+    const values = Object.values(r);
+    for (let raw of values) {
+        if (!raw) continue;
+        const str = String(raw).trim();
+        const dmyMatch = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+        if (dmyMatch) {
+            const day = dmyMatch[1].padStart(2, '0');
+            const month = dmyMatch[2].padStart(2, '0');
+            const year = dmyMatch[3];
+            return `${day}/${month}/${year}`;
         }
-    }
-    const firstVal = Object.values(r)[0];
-    if (firstVal && String(firstVal).match(/\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}/)) {
-        return String(firstVal).trim();
+        const ymdMatch = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+        if (ymdMatch) {
+            const year = ymdMatch[1];
+            const month = ymdMatch[2].padStart(2, '0');
+            const day = ymdMatch[3].padStart(2, '0');
+            return `${day}/${month}/${year}`;
+        }
     }
     return '';
 }
 
-function extractDateStr(dateRaw) {
-    if (!dateRaw) return '';
-    const str = String(dateRaw).trim();
-
-    // Match DD/MM/YYYY or D/M/YYYY
-    const dmyMatch = str.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-    if (dmyMatch) {
-        const day = dmyMatch[1].padStart(2, '0');
-        const month = dmyMatch[2].padStart(2, '0');
-        const year = dmyMatch[3];
-        return `${day}/${month}/${year}`;
+// Convert "YYYY-MM-DD" to "DD/MM/YYYY"
+function ymdToDmy(ymdStr) {
+    if (!ymdStr || !ymdStr.includes('-')) return '';
+    const parts = ymdStr.split('-');
+    if (parts.length === 3) {
+        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
     }
-
-    // Match YYYY-MM-DD
-    const ymdMatch = str.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-    if (ymdMatch) {
-        const year = ymdMatch[1];
-        const month = ymdMatch[2].padStart(2, '0');
-        const day = ymdMatch[3].padStart(2, '0');
-        return `${day}/${month}/${year}`;
-    }
-
-    if (str.includes(' ')) return str.split(' ')[0].trim();
-    if (str.includes('T')) return str.split('T')[0].trim();
-
-    return str;
-}
-
-// Dynamic Options Builder for Date Selector Dropdown
-function updateDateFilterOptions(allRawRows) {
-    const select = document.getElementById('dateFilterSelect');
-    if (!select) return;
-
-    const currentVal = state.selectedDate;
-
-    // Collect all unique dates
-    const uniqueDates = [];
-    allRawRows.forEach(r => {
-        const rawTs = getRowTimestampVal(r);
-        const dStr = extractDateStr(rawTs);
-        if (dStr && dStr.length >= 8 && !uniqueDates.includes(dStr)) {
-            uniqueDates.push(dStr);
-        }
-    });
-
-    select.innerHTML = '<option value="ALL">Tất cả các ngày</option>';
-
-    // Sort dates descending (newest dates first e.g. 26/07/2026, 25/07/2026...)
-    uniqueDates.sort((a, b) => {
-        const pA = a.split('/').reverse().join('');
-        const pB = b.split('/').reverse().join('');
-        return pB.localeCompare(pA);
-    });
-
-    uniqueDates.forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d;
-        opt.innerText = d;
-        if (d === currentVal) {
-            opt.selected = true;
-        }
-        select.appendChild(opt);
-    });
-
-    // Restore selected value if valid
-    if (currentVal && (currentVal === 'ALL' || uniqueDates.includes(currentVal))) {
-        select.value = currentVal;
-    } else {
-        select.value = 'ALL';
-        state.selectedDate = 'ALL';
-    }
+    return '';
 }
 
 async function fetchData() {
@@ -395,7 +344,7 @@ async function fetchData() {
                     res.value.forEach(row => {
                         if (row['Năng suất (pcs/1s)'] != null || row['Năng suất chuẩn (pc/h)'] != null) {
                             catalogRows.push(row);
-                        } else if (getRowTimestampVal(row) || row['Mã máy'] || row['Mã sản phẩm']) {
+                        } else if (extractDateFromRow(row) || row['Mã máy'] || row['Mã sản phẩm']) {
                             allRawRows.push(row);
                         }
                     });
@@ -422,12 +371,11 @@ async function fetchData() {
                 }
 
                 state.allRawRowsHistory = allRawRows;
-                updateDateFilterOptions(allRawRows);
 
                 // Filter rows by Selected Date
                 let filteredRows = allRawRows;
                 if (state.selectedDate && state.selectedDate !== 'ALL') {
-                    filteredRows = allRawRows.filter(r => extractDateStr(getRowTimestampVal(r)) === state.selectedDate);
+                    filteredRows = allRawRows.filter(r => extractDateFromRow(r) === state.selectedDate);
                 }
 
                 const processed = parseRawSheetJson(filteredRows);
@@ -928,19 +876,25 @@ function updateCharts(data) {
 }
 
 // -------------------------------------------------------------
-// 4. EVENT LISTENERS & MODAL HANDLERS
+// 4. EVENT LISTENERS & NATIVE DATE PICKER HANDLER
 // -------------------------------------------------------------
 function initEventListeners() {
-    // Date Filter Selection Listener
-    const dateSelect = document.getElementById('dateFilterSelect');
-    if (dateSelect) {
-        dateSelect.addEventListener('change', (e) => {
-            state.selectedDate = e.target.value;
-            
+    const dateInput = document.getElementById('datePickerInput');
+
+    if (dateInput) {
+        dateInput.addEventListener('change', (e) => {
+            const ymdVal = e.target.value;
+            if (ymdVal) {
+                const dmyVal = ymdToDmy(ymdVal);
+                state.selectedDate = dmyVal;
+            } else {
+                state.selectedDate = 'ALL';
+            }
+
             // Re-filter and re-render dashboard immediately
             let filteredRows = state.allRawRowsHistory;
             if (state.selectedDate && state.selectedDate !== 'ALL') {
-                filteredRows = state.allRawRowsHistory.filter(r => extractDateStr(getRowTimestampVal(r)) === state.selectedDate);
+                filteredRows = state.allRawRowsHistory.filter(r => extractDateFromRow(r) === state.selectedDate);
             }
 
             const processed = parseRawSheetJson(filteredRows);

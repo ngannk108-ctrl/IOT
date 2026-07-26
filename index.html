@@ -35,12 +35,10 @@
                     <span class="status-text">Đang đồng bộ...</span>
                 </div>
 
-                <!-- Bộ Lọc Chọn Ngày (Date Filter) -->
+                <!-- Bộ Lọc Lịch Chọn Ngày & Gõ Ngày Trực Tiếp (Calendar & Date Picker Control) -->
                 <div class="control-group">
-                    <label for="dateFilterSelect"><i class="fa-solid fa-calendar-days"></i> Lọc ngày:</label>
-                    <select id="dateFilterSelect">
-                        <option value="ALL">Tất cả các ngày</option>
-                    </select>
+                    <label for="datePickerInput"><i class="fa-solid fa-calendar-days"></i> Lọc ngày:</label>
+                    <input type="date" id="datePickerInput" class="date-picker-control" title="Nhấp chọn lịch hoặc gõ ngày (Xóa trống để xem tất cả ngày)">
                 </div>
 
                 <div class="control-group">
@@ -198,7 +196,7 @@
         </div>
     </div>
 
-    <!-- Main JavaScript App -->
-    <script src="app.js"></script>
+    <!-- Main JavaScript App with Cache Buster -->
+    <script src="app.js?v=20260726_5"></script>
 </body>
 </html>
